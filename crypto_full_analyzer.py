@@ -3,7 +3,7 @@ import requests
 import pandas as pd
 import numpy as np
 import ta
-from datetime import datetime, timedelta
+from datetime import datetime
 
 st.set_page_config(layout="wide")
 st.title("Crypto Full Analyzer – تحليل فني شامل")
@@ -14,61 +14,50 @@ coin = st.text_input("اكتب رمز العملة مثل DOT أو CVX أو BTC"
 
 if coin:
 
-    df_daily = pd.DataFrame()
-    df_hourly = pd.DataFrame()
-    source_used = []
+    df_list = []
+    sources_used = []
 
     # ----------------------------
-    # بيانات يومية 90 يوم
+    # CryptoCompare Daily
     # ----------------------------
     try:
-        url_daily = f"https://min-api.cryptocompare.com/data/v2/histoday?fsym={coin.upper()}&tsym=USD&limit=90&api_key={API_KEY}"
-        data_daily = requests.get(url_daily).json()
-        data_list = data_daily.get("Data", {}).get("Data", [])
+        url = f"https://min-api.cryptocompare.com/data/v2/histoday?fsym={coin.upper()}&tsym=USD&limit=90&api_key={API_KEY}"
+        data = requests.get(url).json()
+        data_list = data.get("Data", {}).get("Data", [])
         if data_list:
-            df_daily = pd.DataFrame(data_list)
-            df_daily["time"] = pd.to_datetime(df_daily["time"], unit="s")
-            df_daily["open"] = df_daily["open"].astype(float)
-            df_daily["high"] = df_daily["high"].astype(float)
-            df_daily["low"] = df_daily["low"].astype(float)
-            df_daily["close"] = df_daily["close"].astype(float)
-            df_daily["volume"] = df_daily["volumeto"].astype(float)
-            source_used.append("CryptoCompare Daily")
+            df_cc_daily = pd.DataFrame(data_list)
+            df_cc_daily["time"] = pd.to_datetime(df_cc_daily["time"], unit="s")
+            df_cc_daily[["open","high","low","close","volumeto"]] = df_cc_daily[["open","high","low","close","volumeto"]].astype(float)
+            df_list.append(df_cc_daily)
+            sources_used.append("CryptoCompare Daily")
     except:
         pass
 
     # ----------------------------
-    # بيانات ساعية 7 أيام
+    # CoinGecko
     # ----------------------------
     try:
-        url_hourly = f"https://min-api.cryptocompare.com/data/v2/histohour?fsym={coin.upper()}&tsym=USD&limit=168&api_key={API_KEY}"
-        data_hourly = requests.get(url_hourly).json()
-        data_list = data_hourly.get("Data", {}).get("Data", [])
-        if data_list:
-            df_hourly = pd.DataFrame(data_list)
-            df_hourly["time"] = pd.to_datetime(df_hourly["time"], unit="s")
-            df_hourly["open"] = df_hourly["open"].astype(float)
-            df_hourly["high"] = df_hourly["high"].astype(float)
-            df_hourly["low"] = df_hourly["low"].astype(float)
-            df_hourly["close"] = df_hourly["close"].astype(float)
-            df_hourly["volume"] = df_hourly["volumeto"].astype(float)
-            source_used.append("CryptoCompare Hourly")
+        url = f"https://api.coingecko.com/api/v3/coins/{coin}/market_chart?vs_currency=usd&days=90"
+        data = requests.get(url).json()
+        prices = data.get("prices", [])
+        if prices:
+            df_cg = pd.DataFrame(prices, columns=["time","close"])
+            df_cg["time"] = pd.to_datetime(df_cg["time"], unit="ms")
+            df_list.append(df_cg)
+            sources_used.append("CoinGecko 90 يوم")
     except:
         pass
 
     # ----------------------------
     # تحقق من وجود بيانات
     # ----------------------------
-    if df_daily.empty and df_hourly.empty:
+    if not df_list:
         st.error("لا توجد بيانات متاحة لهذه العملة من المصادر المجانية المتاحة حالياً")
         st.stop()
 
-    st.subheader(f"المصادر المستخدمة: {', '.join(source_used)}")
+    df = pd.concat(df_list, ignore_index=True).sort_values("time")
 
-    # ----------------------------
-    # اختيار أي مجموعة بيانات للتحليل الفني
-    # ----------------------------
-    df = pd.concat([df_daily, df_hourly], ignore_index=True).sort_values("time")
+    st.subheader(f"المصادر المستخدمة: {', '.join(sources_used)}")
 
     # ----------------------------
     # المؤشرات الفنية
@@ -91,7 +80,7 @@ if coin:
     st.write(f"{price:.6f} USD")
 
     # ----------------------------
-    # دعم ومقاومة
+    # الدعم والمقاومة
     # ----------------------------
     support = df["low"].tail(20).min()
     resistance = df["high"].tail(20).max()
@@ -100,7 +89,7 @@ if coin:
     st.write("المقاومة:", resistance)
 
     # ----------------------------
-    # Fibonacci
+    # مستويات فيبوناتشي
     # ----------------------------
     high = df["high"].max()
     low = df["low"].min()
@@ -122,12 +111,12 @@ if coin:
     st.write(f"العلوي: {df['BB_high'].iloc[-1]:.6f} | المتوسط: {df['BB_mid'].iloc[-1]:.6f} | السفلي: {df['BB_low'].iloc[-1]:.6f}")
 
     # ----------------------------
-    # مناطق الشراء / البيع / التجميع
+    # تحليل الشراء / البيع / التجميع
     # ----------------------------
     rsi = df["RSI"].iloc[-1]
     macd_val = df["MACD"].iloc[-1]
-    avg_volume = df["volume"].tail(20).mean()
-    last_volume = df["volume"].iloc[-1]
+    avg_volume = df["close"].tail(20).mean()
+    last_volume = df["close"].iloc[-1]
 
     status = ""
     if rsi < 30:
@@ -148,12 +137,12 @@ if coin:
     # Volume Profile
     # ----------------------------
     st.subheader("Volume Profile")
-    bins = np.linspace(df["low"].min(), df["high"].max(), 20)
+    bins = np.linspace(df["close"].min(), df["close"].max(), 20)
     df["bin"] = pd.cut(df["close"], bins)
-    vp = df.groupby("bin")["volume"].sum().reset_index()
+    vp = df.groupby("bin")["close"].sum().reset_index()
     vp = vp.dropna()
     vp["Price Range"] = vp["bin"].apply(lambda x: f"{x.left:.6f}-{x.right:.6f}")
-    vp = vp[["Price Range","volume"]]
+    vp = vp[["Price Range","close"]]
     vp.columns = ["نطاق السعر","حجم التداول"]
     st.bar_chart(vp.set_index("نطاق السعر"))
 
